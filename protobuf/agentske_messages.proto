@@ -1,0 +1,21 @@
+syntax = "proto3";
+package messages;
+option go_package = "project/messages";
+import "actor.proto";
+
+message TrainRequest {
+  actor.PID Sender = 1;
+  WeightsList Weights = 2;
+}
+
+message Response {
+  WeightsList Weights = 1;
+}
+
+message WeightsList {
+  repeated WeightsListInner inner_list = 1;
+}
+
+message WeightsListInner {
+  repeated float value_list = 1;
+}

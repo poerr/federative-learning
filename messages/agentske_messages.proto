@@ -1,6 +1,6 @@
 syntax = "proto3";
 package messages;
-option go_package = "project/messages";
+option go_package = "federative-learning/messages";
 import "actor.proto";
 
 message TrainRequest {

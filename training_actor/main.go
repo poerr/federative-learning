@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net/http"
 
+	console "github.com/asynkron/goconsole"
 	"github.com/asynkron/protoactor-go/actor"
 	"github.com/asynkron/protoactor-go/remote"
 	"github.com/golang/protobuf/proto"
@@ -19,8 +20,8 @@ type WeightsList struct {
 
 type TrainingActor struct{}
 
-func (*TrainingActor) Receive(context actor.Context) {
-	fmt.Println("Started training")
+func (state *TrainingActor) Receive(context actor.Context) {
+	fmt.Println("STARTED TRAINING")
 	switch msg := context.Message().(type) {
 	case *messages.TrainRequest:
 		client := &http.Client{}
@@ -70,5 +71,5 @@ func main() {
 	remoting.Start()
 
 	remoting.Register("training_actor", actor.PropsFromProducer(func() actor.Actor { return &TrainingActor{} }))
-	select {}
+	console.ReadLine()
 }

@@ -5,11 +5,11 @@ from tensorflow.keras import layers
 
 
 def train_nn(weights = None):
-    tf.reset_default_graph()
+    #tf.reset_default_graph()
 
-    session = tf.Session()
+    #session = tf.Session()
 
-    tf.keras.backend.set_session(session)
+    #tf.keras.backend.set_session(session)
 
         
     model = keras.Sequential([
@@ -36,6 +36,6 @@ def train_nn(weights = None):
 
     weights = model.get_weights()
 
-    session.close()
+    #session.close()
 
     return weights

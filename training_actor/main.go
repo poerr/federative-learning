@@ -21,7 +21,6 @@ type WeightsList struct {
 type TrainingActor struct{}
 
 func (state *TrainingActor) Receive(context actor.Context) {
-	fmt.Println("STARTED TRAINING")
 	switch msg := context.Message().(type) {
 	case *messages.TrainRequest:
 		client := &http.Client{}
@@ -42,7 +41,7 @@ func (state *TrainingActor) Receive(context actor.Context) {
 			return
 		}
 		defer resp.Body.Close()
-
+		fmt.Println("RESP BODY", resp.Body)
 		// Read the response body
 		weightsBytes, err := ioutil.ReadAll(resp.Body)
 

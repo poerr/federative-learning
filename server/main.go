@@ -31,6 +31,7 @@ type (
 		actorsTraining uint
 
 		children *actor.PIDSet
+		weights  [][][]float32
 	}
 	Logger struct {
 		pid       *actor.PID
@@ -48,10 +49,13 @@ type (
 	}
 	startTraining struct {
 		trainingActorPID *actor.PID
-		weights          [][]float64
+		weights          [][]float32
 	}
 	spawnedRemoteActor struct {
 		remoteActorPID *actor.PID
+	}
+	calculateAverage struct {
+		weights [][][]float32
 	}
 )
 
@@ -74,21 +78,22 @@ func newLoggerActor() actor.Actor {
 func (state *Initializer) Receive(context actor.Context) {
 	switch msg := context.Message().(type) {
 
-	case *actor.Started:
+	case *actor.PID:
 		coorditatorProps := actor.PropsFromProducer(newCoordinatorActor)
 		coorditatorPID := context.Spawn(coorditatorProps)
 		aggregatorProps := actor.PropsFromProducer(newAggregatorActor)
 		aggregatorPID := context.Spawn(aggregatorProps)
 		loggerProps := actor.PropsFromProducer(newLoggerActor)
 		loggerPID := context.Spawn(loggerProps)
-		msg.SystemMessage()
+
+		state.pid = msg
 		state.aggregatorPID = aggregatorPID
 		state.loggerPID = loggerPID
 		state.coordinatorPID = coorditatorPID
-		fmt.Println(state.aggregatorPID, state.loggerPID, state.coordinatorPID)
-		context.Send(loggerPID, pidsDtos{initPID: state.pid, loggerPID: loggerPID})
-		context.Send(coorditatorPID, pidsDtos{initPID: state.pid, coordinatorPID: coorditatorPID, loggerPID: loggerPID, aggregatorPID: aggregatorPID})
-		context.Send(aggregatorPID, pidsDtos{initPID: state.pid, aggregatorPID: aggregatorPID})
+
+		context.Send(loggerPID, pidsDtos{initPID: msg, loggerPID: loggerPID})
+		context.Send(coorditatorPID, pidsDtos{initPID: msg, coordinatorPID: coorditatorPID, loggerPID: loggerPID, aggregatorPID: aggregatorPID})
+		context.Send(aggregatorPID, pidsDtos{initPID: msg, aggregatorPID: aggregatorPID})
 
 	case spawnedRemoteActor:
 		context.Send(state.coordinatorPID, msg)
@@ -119,6 +124,9 @@ func (state *Coordinator) Receive(context actor.Context) {
 		state.children.Add(msg.remoteActorPID)
 
 	case startTraining:
+		if state.roundsTrained >= state.maxRounds {
+			return
+		}
 		trainMessage := &messages.TrainRequest{}
 		state.children.ForEach(func(i int, pid *actor.PID) {
 			context.Send(pid, trainMessage)
@@ -126,7 +134,19 @@ func (state *Coordinator) Receive(context actor.Context) {
 		})
 		state.roundsTrained += 1
 
-		fmt.Println("START TRAINING STATE", *state)
+	case *messages.Response:
+		// another node finished training
+		state.actorsTraining -= 1
+
+		// convert the weights and add it to the weight list of this round of training
+		convertedWeights := ConvertWeightsList(msg.Weights)
+		state.weights = append(state.weights, convertedWeights)
+
+		if state.actorsTraining == 0 {
+			// All nodes finished training
+			// send the weights to the aggregator
+			context.Send(state.aggregatorPID, calculateAverage{weights: state.weights})
+		}
 	}
 }
 
@@ -143,6 +163,7 @@ func (state *Logger) Receive(context actor.Context) {
 }
 
 func (state *Aggregator) Receive(context actor.Context) {
+
 	switch msg := context.Message().(type) {
 	case pidsDtos:
 		if msg.initPID == nil {
@@ -151,14 +172,51 @@ func (state *Aggregator) Receive(context actor.Context) {
 		state.parentPID = msg.initPID
 		state.pid = msg.aggregatorPID
 
+	case calculateAverage:
+		// calculate the average
+		go FedAVG(msg.weights, globalWeightModel)
+		// send the message to coordinator to start a new training round
+		message := startTraining{weights: globalWeightModel}
+		context.Send(state.parentPID, message)
 	}
 }
 
-type weights struct {
-	weightList [][]float64
+func FedAVG(weightsToSum [][][]float32, globalWeights [][]float32) {
+
+	if len(weightsToSum) == 0 {
+		panic("No weights were provided!")
+	}
+
+	summedWeightsArray := make([][]float32, len(weightsToSum[0][0]))
+
+	for _, nodeWeights := range weightsToSum {
+		for j, nodeLayerWeights := range nodeWeights {
+			for k, weight := range nodeLayerWeights {
+				summedWeightsArray[j][k] += weight
+			}
+		}
+	}
+
+	averageWeights := make([][]float32, len(summedWeightsArray))
+	for i, sumWeightArray := range summedWeightsArray {
+		for j, singleWeight := range sumWeightArray {
+			averageWeights[i][j] = singleWeight / float32(len(weightsToSum))
+		}
+	}
+	globalWeights = averageWeights
 }
 
-var globalWeightModel weights
+func ConvertWeightsList(weightsList *messages.WeightsList) [][]float32 {
+	var weightsArray [][]float32
+
+	for _, innerList := range weightsList.InnerList {
+		weightsArray = append(weightsArray, innerList.ValueList)
+	}
+
+	return weightsArray
+}
+
+var globalWeightModel [][]float32
 
 func main() {
 
@@ -175,6 +233,7 @@ func main() {
 			actor.WithSupervisor(supervisor))
 	pid := rootContext.Spawn(props)
 
+	rootContext.Send(pid, pid)
 	// DEBUGGING
 	// system.EventStream.Subscribe(func(event interface{}) {
 	// 	if deadLetter, ok := event.(*actor.DeadLetterEvent); ok {

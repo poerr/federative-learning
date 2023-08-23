@@ -5,13 +5,12 @@ import (
 
 	"federative-learning/messages"
 
-	"io/ioutil"
+	"encoding/json"
 	"net/http"
 
 	console "github.com/asynkron/goconsole"
 	"github.com/asynkron/protoactor-go/actor"
 	"github.com/asynkron/protoactor-go/remote"
-	"github.com/golang/protobuf/proto"
 )
 
 type WeightsList struct {
@@ -41,20 +40,27 @@ func (state *TrainingActor) Receive(context actor.Context) {
 			return
 		}
 		defer resp.Body.Close()
-		fmt.Println("RESP BODY", resp.Body)
 		// Read the response body
-		weightsBytes, err := ioutil.ReadAll(resp.Body)
-
-		if err != nil {
-			fmt.Println("Error reading response body:", err)
-			return
-		}
+		// weightsBytes, err := io.ReadAll(resp.Body)
+		// weightsBytesString := string(weightsBytes)
+		// fmt.Println(weightsBytes)
+		// if err != nil {
+		// 	fmt.Println("Error reading response body:", err)
+		// 	return
+		// }
 
 		weightsList := &messages.WeightsList{}
 
-		if err := proto.Unmarshal(weightsBytes, weightsList); err != nil {
-			// Handle the error if unmarshaling fails
+		var j interface{}
+		decodingErr := json.NewDecoder(resp.Body).Decode(&j)
+		if decodingErr != nil {
+			fmt.Println(decodingErr)
+			panic(decodingErr)
 		}
+
+		// if err := json.Unmarshal([]byte(weightsBytesString), &weightsList1); err != nil {
+		// 	fmt.Println("GRESKA KOD MARSHALOVANJA: ", err)
+		// }
 
 		context.Send(msg.Sender, &messages.Response{
 			Weights: weightsList,

@@ -11,7 +11,7 @@ def train_nn_endpoint():
     print('ENDPOINT HIT')
     weights = train_nn()
 
-    serialized_weights = [weight.tolist() for weight in weights]
+    serialized_weights = [weight.tolist() for weight in weights]    
     return jsonify(serialized_weights), 200
 
 

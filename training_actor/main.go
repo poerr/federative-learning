@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
+	"io"
 
 	"federative-learning/messages"
 
-	"encoding/json"
 	"net/http"
 
 	console "github.com/asynkron/goconsole"
@@ -17,6 +17,9 @@ type WeightsList struct {
 	InnerWeightsLists [][]float64
 }
 
+type TrainedWeights struct {
+	Value interface{}
+}
 type TrainingActor struct{}
 
 func (state *TrainingActor) Receive(context actor.Context) {
@@ -40,30 +43,19 @@ func (state *TrainingActor) Receive(context actor.Context) {
 			return
 		}
 		defer resp.Body.Close()
-		// Read the response body
-		// weightsBytes, err := io.ReadAll(resp.Body)
-		// weightsBytesString := string(weightsBytes)
-		// fmt.Println(weightsBytes)
-		// if err != nil {
-		// 	fmt.Println("Error reading response body:", err)
-		// 	return
-		// }
 
-		weightsList := &messages.WeightsList{}
+		weightsBytes, err := io.ReadAll(resp.Body)
 
-		var j interface{}
-		decodingErr := json.NewDecoder(resp.Body).Decode(&j)
-		if decodingErr != nil {
-			fmt.Println(decodingErr)
-			panic(decodingErr)
+		if err != nil {
+			panic(err)
 		}
 
-		// if err := json.Unmarshal([]byte(weightsBytesString), &weightsList1); err != nil {
-		// 	fmt.Println("GRESKA KOD MARSHALOVANJA: ", err)
-		// }
-
-		context.Send(msg.Sender, &messages.Response{
-			Weights: weightsList,
+		var senderPID actor.PID
+		senderPID.Address = "127.0.0.1:8000"
+		senderPID.Id = "$1/$2"
+		fmt.Println(msg.Sender)
+		context.Send(&senderPID, &messages.TrainResponse{
+			Data: weightsBytes,
 		})
 	}
 }

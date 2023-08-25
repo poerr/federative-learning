@@ -19,3 +19,7 @@ message WeightsList {
 message WeightsListInner {
   repeated float value_list = 1;
 }
+
+message TrainResponse {
+  bytes data = 1;
+}

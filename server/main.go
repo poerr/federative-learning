@@ -43,12 +43,14 @@ type (
 		pid       *actor.PID
 		parentPID *actor.PID
 	}
+
 	pidsDtos struct {
 		initPID        *actor.PID
 		coordinatorPID *actor.PID
 		loggerPID      *actor.PID
 		aggregatorPID  *actor.PID
 	}
+
 	startTraining struct {
 		trainingActorPID *actor.PID
 		weights          [][]float32
@@ -88,6 +90,7 @@ func newLoggerActor() actor.Actor {
 }
 
 func (state *Initializer) Receive(context actor.Context) {
+
 	switch msg := context.Message().(type) {
 
 	case *actor.PID:
@@ -119,7 +122,9 @@ func (state *Initializer) Receive(context actor.Context) {
 }
 
 func (state *Coordinator) Receive(context actor.Context) {
+
 	switch msg := context.Message().(type) {
+
 	case *actor.Started:
 		state.children = actor.NewPIDSet()
 
@@ -148,7 +153,17 @@ func (state *Coordinator) Receive(context actor.Context) {
 		}
 		// Create a training reqeuest message which will be sent
 		// to all the training actors
-		trainMessage := &messages.TrainRequest{Sender: state.pid}
+		weightsJson, marshalErr := json.Marshal(globalWeightsModel)
+
+		if marshalErr != nil {
+			panic(marshalErr)
+		}
+
+		trainMessage := &messages.TrainRequest{
+			SenderAddress:    "127.0.0.1:8000",
+			SenderId:         state.pid.Id,
+			MarshaledWeights: weightsJson,
+		}
 		// Send the message to all the training actors
 		state.children.ForEach(func(i int, pid *actor.PID) {
 			context.Send(pid, trainMessage)
@@ -211,11 +226,10 @@ func FedAVG(array []WeightsDictionary) {
 	l3b_calculated := make([]float64, 128)
 	l4b_calculated := make([]float64, 1)
 	// Arrays to store averaged weights
-	var l1w_calculated [24][64]float64
-	var l2w_calculated [64][128]float64
-	var l3w_calculated [128][128]float64
-	var l4w_calculated [128][1]float64
-
+	// var l1w_calculated [24][64]float64
+	// var l2w_calculated [64][128]float64
+	// var l3w_calculated [128][128]float64
+	// var l4w_calculated [128][1]float64
 	// Array of 2D weight arrays that need to be averaged
 	var l1w_array [][24][64]float64
 	var l2w_array [][64][128]float64
@@ -246,28 +260,23 @@ func FedAVG(array []WeightsDictionary) {
 	go calcAvg1D(l2b_array, l2b_calculated)
 	go calcAvg1D(l3b_array, l3b_calculated)
 	go calcAvg1D(l4b_array, l4b_calculated)
-
-	// Averaging the weights
-	go calcAvgL1W(l1w_array, l1w_calculated)
-	go calcAvgL2W(l2w_array, l2w_calculated)
-	go calcAvgL3W(l3w_array, l3w_calculated)
-	go calcAvgL4W(l4w_array, l4w_calculated)
-
 	globalWeightsModel.Layer1_biases = l1b_calculated
 	globalWeightsModel.Layer2_biases = l2b_calculated
 	globalWeightsModel.Layer3_biases = l3b_calculated
 	globalWeightsModel.Layer4_biases = l4b_calculated
 
-	globalWeightsModel.Layer1_weights = l1w_calculated
-	globalWeightsModel.Layer2_weights = l2w_calculated
-	globalWeightsModel.Layer3_weights = l3w_calculated
-	globalWeightsModel.Layer4_weights = l4w_calculated
+	// Averaging the weights
+	globalWeightsModel.Layer1_weights = calcAvgL1W(l1w_array)
+	globalWeightsModel.Layer2_weights = calcAvgL2W(l2w_array)
+	globalWeightsModel.Layer3_weights = calcAvgL3W(l3w_array)
+	globalWeightsModel.Layer4_weights = calcAvgL4W(l4w_array)
 }
 
 // Averaging functions
-func calcAvgL1W(array [][24][64]float64, result [24][64]float64) {
+func calcAvgL1W(array [][24][64]float64) [24][64]float64 {
 
 	length := float64(len(array))
+	var result [24][64]float64
 
 	for _, array2d := range array {
 		for i, array1d := range array2d {
@@ -276,15 +285,18 @@ func calcAvgL1W(array [][24][64]float64, result [24][64]float64) {
 			}
 		}
 	}
+
 	for i, row := range result {
 		for j := range row {
 			result[i][j] /= length
 		}
 	}
+	return result
 }
-func calcAvgL2W(array [][64][128]float64, result [64][128]float64) {
+func calcAvgL2W(array [][64][128]float64) [64][128]float64 {
 
 	length := float64(len(array))
+	var result [64][128]float64
 
 	for _, array2d := range array {
 		for i, array1d := range array2d {
@@ -298,10 +310,12 @@ func calcAvgL2W(array [][64][128]float64, result [64][128]float64) {
 			result[i][j] /= length
 		}
 	}
+	return result
 }
-func calcAvgL3W(array [][128][128]float64, result [128][128]float64) {
+func calcAvgL3W(array [][128][128]float64) [128][128]float64 {
 
 	length := float64(len(array))
+	var result [128][128]float64
 
 	for _, array2d := range array {
 		for i, array1d := range array2d {
@@ -315,11 +329,12 @@ func calcAvgL3W(array [][128][128]float64, result [128][128]float64) {
 			result[i][j] /= length
 		}
 	}
+	return result
 }
-func calcAvgL4W(array [][128][1]float64, result [128][1]float64) {
+func calcAvgL4W(array [][128][1]float64) [128][1]float64 {
 
 	length := float64(len(array))
-
+	var result [128][1]float64
 	for _, array2d := range array {
 		for i, array1d := range array2d {
 			for j, value := range array1d {
@@ -332,6 +347,7 @@ func calcAvgL4W(array [][128][1]float64, result [128][1]float64) {
 			result[i][j] /= length
 		}
 	}
+	return result
 }
 func calcAvg1D(array [][]float64, result []float64) {
 

@@ -8,7 +8,10 @@ app = Flask(__name__)
 @app.route('/train_nn', methods=['POST'])
 def train_nn_endpoint():
 
-    weights = train_nn()
+    data = request.json
+    print(data)
+    print(type(data))
+    weights = train_nn(data)
 
     serialized_weights = [weight.tolist() for weight in weights]
     

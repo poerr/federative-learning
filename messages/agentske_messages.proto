@@ -4,8 +4,9 @@ option go_package = "federative-learning/messages";
 import "actor.proto";
 
 message TrainRequest {
-  actor.PID Sender = 1;
-  WeightsList Weights = 2;
+  string SenderAddress = 1;
+  string SenderId = 2;
+  bytes marshaledWeights = 3;
 }
 
 message Response {

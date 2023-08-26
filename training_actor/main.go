@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 
@@ -13,6 +14,18 @@ import (
 	"github.com/asynkron/protoactor-go/remote"
 )
 
+type (
+	WeightsDictionary struct {
+		Layer1_weights [24][64]float64
+		Layer1_biases  []float64
+		Layer2_weights [64][128]float64
+		Layer2_biases  []float64
+		Layer3_weights [128][128]float64
+		Layer3_biases  []float64
+		Layer4_weights [128][1]float64
+		Layer4_biases  []float64
+	}
+)
 type WeightsList struct {
 	InnerWeightsLists [][]float64
 }
@@ -20,6 +33,7 @@ type WeightsList struct {
 type TrainedWeights struct {
 	Value interface{}
 }
+
 type TrainingActor struct{}
 
 func (state *TrainingActor) Receive(context actor.Context) {
@@ -27,7 +41,7 @@ func (state *TrainingActor) Receive(context actor.Context) {
 	case *messages.TrainRequest:
 		client := &http.Client{}
 
-		req, err := http.NewRequest("POST", "http://localhost:5000/train_nn", nil)
+		req, err := http.NewRequest("POST", "http://localhost:5000/train_nn", bytes.NewBuffer(msg.MarshaledWeights))
 		if err != nil {
 			fmt.Println("Error creating request:", err)
 			return
@@ -51,9 +65,9 @@ func (state *TrainingActor) Receive(context actor.Context) {
 		}
 
 		var senderPID actor.PID
-		senderPID.Address = "127.0.0.1:8000"
-		senderPID.Id = "$1/$2"
-		fmt.Println(msg.Sender)
+		senderPID.Address = msg.SenderAddress
+		senderPID.Id = msg.SenderId
+
 		context.Send(&senderPID, &messages.TrainResponse{
 			Data: weightsBytes,
 		})

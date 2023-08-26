@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"time"
 
 	"federative-learning/messages"
 
@@ -25,20 +26,29 @@ type (
 		Layer4_weights [128][1]float64
 		Layer4_biases  []float64
 	}
+	TrainingActor struct {
+		behavior actor.Behavior
+	}
 )
-type WeightsList struct {
-	InnerWeightsLists [][]float64
+
+// Training actor will have 2 states: AbleToTrain & TrainingInProgress
+func NewSetTrainingActorBehavior() actor.Actor {
+	act := &TrainingActor{
+		behavior: actor.NewBehavior(),
+	}
+	act.behavior.Become(act.AbleToTrain)
+	return act
 }
-
-type TrainedWeights struct {
-	Value interface{}
-}
-
-type TrainingActor struct{}
-
 func (state *TrainingActor) Receive(context actor.Context) {
+	state.behavior.Receive(context)
+}
+
+// If the actor is in 'AbleToTrain' state, once it gets the
+// TrainRequest message, it will start training
+func (state *TrainingActor) AbleToTrain(context actor.Context) {
 	switch msg := context.Message().(type) {
 	case *messages.TrainRequest:
+		fmt.Printf("Training actor %v started training at %v\n", context.Self(), time.Now())
 		client := &http.Client{}
 
 		req, err := http.NewRequest("POST", "http://localhost:5000/train_nn", bytes.NewBuffer(msg.MarshaledWeights))
@@ -59,7 +69,7 @@ func (state *TrainingActor) Receive(context actor.Context) {
 		defer resp.Body.Close()
 
 		weightsBytes, err := io.ReadAll(resp.Body)
-
+		fmt.Printf("Training actor %v finished training at %v\n", context.Self(), time.Now())
 		if err != nil {
 			panic(err)
 		}
@@ -74,6 +84,16 @@ func (state *TrainingActor) Receive(context actor.Context) {
 	}
 }
 
+// If the actor is in 'TrainingInProgress' state, it will not
+// start training again
+func (state *TrainingActor) TrainingInProgress(context actor.Context) {
+	switch msg := context.Message().(type) {
+	case *messages.TrainRequest:
+		fmt.Println("Training already in progress!")
+		fmt.Printf("Received message from %v", msg.SenderAddress+" "+msg.SenderId)
+	}
+}
+
 func main() {
 
 	system := actor.NewActorSystem()
@@ -81,6 +101,6 @@ func main() {
 	remoting := remote.NewRemote(system, remoteConfig)
 	remoting.Start()
 
-	remoting.Register("training_actor", actor.PropsFromProducer(func() actor.Actor { return &TrainingActor{} }))
+	remoting.Register("training_actor", actor.PropsFromProducer(NewSetTrainingActorBehavior))
 	console.ReadLine()
 }

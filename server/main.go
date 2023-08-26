@@ -3,6 +3,7 @@ package main
 import (
 	"federative-learning/messages"
 	"fmt"
+	"strconv"
 	"time"
 
 	"encoding/json"
@@ -19,14 +20,15 @@ type (
 		loggerPID      *actor.PID
 		aggregatorPID  *actor.PID
 	}
+	Aggregator struct {
+		pid       *actor.PID
+		parentPID *actor.PID
+	}
 	Coordinator struct {
 		pid           *actor.PID
 		parentPID     *actor.PID
 		loggerPID     *actor.PID
 		aggregatorPID *actor.PID
-		remote_addr   string
-		remote_port   uint
-		remote_name   string
 
 		roundsTrained  uint
 		maxRounds      uint
@@ -34,12 +36,10 @@ type (
 
 		children *actor.PIDSet
 		weights  []WeightsDictionary
+
+		behavior actor.Behavior
 	}
 	Logger struct {
-		pid       *actor.PID
-		parentPID *actor.PID
-	}
-	Aggregator struct {
 		pid       *actor.PID
 		parentPID *actor.PID
 	}
@@ -51,10 +51,9 @@ type (
 		aggregatorPID  *actor.PID
 	}
 
-	startTraining struct {
-		trainingActorPID *actor.PID
-		weights          [][]float32
-	}
+	startTraining  struct{}
+	weightsUpdated struct{}
+
 	spawnedRemoteActor struct {
 		remoteActorPID *actor.PID
 	}
@@ -63,30 +62,31 @@ type (
 	}
 	WeightsDictionary struct {
 		Layer1_weights [24][64]float64
-		Layer1_biases  []float64
+		Layer1_biases  [64]float64
 		Layer2_weights [64][128]float64
-		Layer2_biases  []float64
+		Layer2_biases  [128]float64
 		Layer3_weights [128][128]float64
-		Layer3_biases  []float64
+		Layer3_biases  [128]float64
 		Layer4_weights [128][1]float64
-		Layer4_biases  []float64
+		Layer4_biases  [1]float64
 	}
 )
 
 func newInitializatorActor() actor.Actor {
 	return &Initializer{}
 }
-
-func newCoordinatorActor() actor.Actor {
-	return &Coordinator{}
-}
-
 func newAggregatorActor() actor.Actor {
 	return &Aggregator{}
 }
-
 func newLoggerActor() actor.Actor {
 	return &Logger{}
+}
+func NewSetCoordinatorBehavior() actor.Actor {
+	act := &Coordinator{
+		behavior: actor.NewBehavior(),
+	}
+	act.behavior.Become(act.Training)
+	return act
 }
 
 func (state *Initializer) Receive(context actor.Context) {
@@ -94,7 +94,7 @@ func (state *Initializer) Receive(context actor.Context) {
 	switch msg := context.Message().(type) {
 
 	case *actor.PID:
-		coorditatorProps := actor.PropsFromProducer(newCoordinatorActor)
+		coorditatorProps := actor.PropsFromProducer(NewSetCoordinatorBehavior) // Setting the state to Training
 		coorditatorPID := context.Spawn(coorditatorProps)
 		aggregatorProps := actor.PropsFromProducer(newAggregatorActor)
 		aggregatorPID := context.Spawn(aggregatorProps)
@@ -109,22 +109,34 @@ func (state *Initializer) Receive(context actor.Context) {
 		context.Send(loggerPID, pidsDtos{initPID: msg, loggerPID: loggerPID})
 		context.Send(coorditatorPID, pidsDtos{initPID: msg, coordinatorPID: coorditatorPID, loggerPID: loggerPID, aggregatorPID: aggregatorPID})
 		context.Send(aggregatorPID, pidsDtos{initPID: msg, aggregatorPID: aggregatorPID})
+		fmt.Printf("Initialized all actors %v\n", time.Now())
 
 	case spawnedRemoteActor:
 		// Passing the message to the cooridnator actor
+		fmt.Printf("Spawned remote actor %v at %v\n", msg.remoteActorPID, time.Now())
 		context.Send(state.coordinatorPID, msg)
 
 	case startTraining:
 		// Passing the message to the cooridnator actor
+		context.Send(state.coordinatorPID, msg)
+	case weightsUpdated:
+		// Once the weights are updated, let coordinator know
 		context.Send(state.coordinatorPID, msg)
 	}
 
 }
 
 func (state *Coordinator) Receive(context actor.Context) {
+	state.behavior.Receive(context)
+}
 
+// This state signifies that the weights are ready and averaged
+// so the training can start
+func (state *Coordinator) Training(context actor.Context) {
 	switch msg := context.Message().(type) {
 
+	// When the actor is initialized, initialize an array of PIDs that
+	// will represent all the training actors
 	case *actor.Started:
 		state.children = actor.NewPIDSet()
 
@@ -140,15 +152,18 @@ func (state *Coordinator) Receive(context actor.Context) {
 		state.roundsTrained = 0
 		state.actorsTraining = 0
 
+	// When a remote actor is spawned, we get a message
+	// and put the remote actor's PID in the list of training actors
 	case spawnedRemoteActor:
-		// When a remote actor is spawned, we get a message
-		// and put the remote actor's PID in the list of training actors
 		state.children.Add(msg.remoteActorPID)
 
+	// When we receive this message, the coordinator sends messages to
+	// all the training actors to start a new round of training
 	case startTraining:
+		fmt.Printf("Starting a new round of training at %v\n", time.Now())
 		// If we have reached maximum rounds of training we exit
 		if state.roundsTrained >= state.maxRounds {
-			fmt.Printf("Reached a maximum of %v training rounds.", state.maxRounds)
+			fmt.Printf("Reached a maximum of %v training rounds.\n", state.maxRounds)
 			return
 		}
 		// Create a training reqeuest message which will be sent
@@ -159,8 +174,9 @@ func (state *Coordinator) Receive(context actor.Context) {
 			panic(marshalErr)
 		}
 
+		senderAddress := localAddress + ":" + strconv.Itoa(port)
 		trainMessage := &messages.TrainRequest{
-			SenderAddress:    "127.0.0.1:8000",
+			SenderAddress:    senderAddress,
 			SenderId:         state.pid.Id,
 			MarshaledWeights: weightsJson,
 		}
@@ -174,6 +190,7 @@ func (state *Coordinator) Receive(context actor.Context) {
 		fmt.Println("TRAINING ROUND: ", state.roundsTrained)
 
 	case *messages.TrainResponse:
+		fmt.Printf("Got a training response %v\n", time.Now())
 		// Another node finished training
 		state.actorsTraining -= 1
 		// Convert the weights and add it to the weight list of this round of training
@@ -186,8 +203,25 @@ func (state *Coordinator) Receive(context actor.Context) {
 		// All nodes finished training
 		// send the weights to the aggregator
 		if state.actorsTraining == 0 {
+			fmt.Printf("All actors finished training, the round %v has ended at %v\n", state.roundsTrained, time.Now())
 			context.Send(state.aggregatorPID, calculateAverage{weights: weightsToAvg})
+			state.behavior.Become(state.WeightCalculating)
 		}
+	}
+}
+
+// This state signifies that one round of training is over
+// so we have to wait until the weights are averaged and updated
+// to start a new training round
+func (state *Coordinator) WeightCalculating(context actor.Context) {
+
+	switch msg := context.Message().(type) {
+	case startTraining:
+		fmt.Println("Waiting for new weight model!")
+		fmt.Printf("msg: %v\n", msg)
+	case weightsUpdated:
+		state.behavior.Become(state.Training)
+		context.Send(state.parentPID, startTraining{})
 	}
 }
 
@@ -213,23 +247,25 @@ func (state *Aggregator) Receive(context actor.Context) {
 		state.parentPID = msg.initPID
 		state.pid = msg.aggregatorPID
 
+	// Once all the training actors have finished
+	// we send all the weights to the aggregator
+	// that calculates the average
+	// Once it is done it tell the coordinator that it has finished
+	// so it can start another round of training
 	case calculateAverage:
-		go FedAVG(msg.weights)
-		context.Send(state.parentPID, startTraining{})
+		fmt.Printf("Averaging the weights %v\n", time.Now())
+		FedAVG(msg.weights)
+		fmt.Printf("Weights have been averaged %v\n", time.Now())
+		context.Send(state.parentPID, weightsUpdated{})
 	}
 }
 
 func FedAVG(array []WeightsDictionary) {
 	// Arrays to store averaged biases
-	l1b_calculated := make([]float64, 64)
-	l2b_calculated := make([]float64, 128)
-	l3b_calculated := make([]float64, 128)
-	l4b_calculated := make([]float64, 1)
-	// Arrays to store averaged weights
-	// var l1w_calculated [24][64]float64
-	// var l2w_calculated [64][128]float64
-	// var l3w_calculated [128][128]float64
-	// var l4w_calculated [128][1]float64
+	var l1b_calculated [64]float64
+	var l2b_calculated [128]float64
+	var l3b_calculated [128]float64
+	var l4b_calculated [1]float64
 	// Array of 2D weight arrays that need to be averaged
 	var l1w_array [][24][64]float64
 	var l2w_array [][64][128]float64
@@ -237,10 +273,10 @@ func FedAVG(array []WeightsDictionary) {
 	var l4w_array [][128][1]float64
 
 	// Array of arrays of biases that need to be averaged
-	var l1b_array [][]float64
-	var l2b_array [][]float64
-	var l3b_array [][]float64
-	var l4b_array [][]float64
+	var l1b_array [][64]float64
+	var l2b_array [][128]float64
+	var l3b_array [][128]float64
+	var l4b_array [][1]float64
 
 	// Create a collection of all the arrays of the same sort
 	for _, value := range array {
@@ -256,10 +292,10 @@ func FedAVG(array []WeightsDictionary) {
 	}
 
 	// Averaging the biases
-	go calcAvg1D(l1b_array, l1b_calculated)
-	go calcAvg1D(l2b_array, l2b_calculated)
-	go calcAvg1D(l3b_array, l3b_calculated)
-	go calcAvg1D(l4b_array, l4b_calculated)
+	go calcAvgL1B(l1b_array, l1b_calculated)
+	go calcAvgL2B(l2b_array, l2b_calculated)
+	go calcAvgL3B(l3b_array, l3b_calculated)
+	go calcAvgL4B(l4b_array, l4b_calculated)
 	globalWeightsModel.Layer1_biases = l1b_calculated
 	globalWeightsModel.Layer2_biases = l2b_calculated
 	globalWeightsModel.Layer3_biases = l3b_calculated
@@ -349,7 +385,46 @@ func calcAvgL4W(array [][128][1]float64) [128][1]float64 {
 	}
 	return result
 }
-func calcAvg1D(array [][]float64, result []float64) {
+func calcAvgL1B(array [][64]float64, result [64]float64) {
+
+	length := float64(len(array))
+	for _, row := range array {
+		for i, value := range row {
+			result[i] += value
+		}
+	}
+
+	for i := range result {
+		result[i] /= length
+	}
+}
+func calcAvgL2B(array [][128]float64, result [128]float64) {
+
+	length := float64(len(array))
+	for _, row := range array {
+		for i, value := range row {
+			result[i] += value
+		}
+	}
+
+	for i := range result {
+		result[i] /= length
+	}
+}
+func calcAvgL3B(array [][128]float64, result [128]float64) {
+
+	length := float64(len(array))
+	for _, row := range array {
+		for i, value := range row {
+			result[i] += value
+		}
+	}
+
+	for i := range result {
+		result[i] /= length
+	}
+}
+func calcAvgL4B(array [][1]float64, result [1]float64) {
 
 	length := float64(len(array))
 	for _, row := range array {
@@ -366,7 +441,14 @@ func calcAvg1D(array [][]float64, result []float64) {
 // Global weights model
 var globalWeightsModel WeightsDictionary
 
+// IP address and the port of the local actor system instance
+var localAddress string
+var port int
+
 func main() {
+
+	localAddress = "127.0.0.1"
+	port = 8000
 
 	system := actor.NewActorSystem()
 	decider := func(reason interface{}) actor.Directive {
@@ -383,7 +465,7 @@ func main() {
 
 	rootContext.Send(pid, pid)
 
-	remoteConfig := remote.Configure("127.0.0.1", 8000)
+	remoteConfig := remote.Configure(localAddress, port)
 	remoting := remote.NewRemote(system, remoteConfig)
 	remoting.Start()
 

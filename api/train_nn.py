@@ -6,12 +6,9 @@ import numpy as np
 
 def train_nn(weights = None):
     #tf.reset_default_graph()
-
     #session = tf.Session()
-
     #tf.keras.backend.set_session(session)
 
-        
     model = keras.Sequential([
                 layers.Dense(64, activation='sigmoid', input_shape=(24,)),
                 layers.Dense(128, activation='sigmoid'),
@@ -29,15 +26,14 @@ def train_nn(weights = None):
     X_train.drop(dataset.columns[0], axis=1, inplace=True)
 
     if weights is not None:
-        print("WEIGHTS IS NOT NONE BRO")
-        new_weights_layer1 = weights.layer1_weights
-        new_weights_layer2 = weights.layer2_weights
-        new_weights_layer3 = weights.layer3_weights
-        new_weights_layer4 = weights.layer4_weights
-        new_biases_layer1 = weights.layer1_biases
-        new_biases_layer2 = weights.layer2_biases
-        new_biases_layer3 = weights.layer3_biases
-        new_biases_layer4 = weights.layer4_biases
+        new_weights_layer1 = weights["Layer1_weights"]
+        new_weights_layer2 = weights["Layer2_weights"]
+        new_weights_layer3 = weights["Layer3_weights"]
+        new_weights_layer4 = weights["Layer4_weights"]
+        new_biases_layer1 = weights["Layer1_biases"]
+        new_biases_layer2 = weights["Layer2_biases"]
+        new_biases_layer3 = weights["Layer3_biases"]
+        new_biases_layer4 = weights["Layer4_biases"]
 
         model.layers[0].set_weights([np.array(new_weights_layer1), np.array(new_biases_layer1)])
         model.layers[1].set_weights([np.array(new_weights_layer2), np.array(new_biases_layer2)])
@@ -46,9 +42,6 @@ def train_nn(weights = None):
         
     model.fit(X_train, y_train, epochs=10, verbose=1)
 
-
     weights = model.get_weights()
-
     #session.close()
-
     return weights

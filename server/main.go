@@ -3,6 +3,7 @@ package main
 import (
 	"federative-learning/messages"
 	"fmt"
+	"os"
 	"strconv"
 	"time"
 
@@ -51,8 +52,9 @@ type (
 		aggregatorPID  *actor.PID
 	}
 
-	startTraining  struct{}
-	weightsUpdated struct{}
+	startTraining    struct{}
+	weightsUpdated   struct{}
+	trainingFinished struct{}
 
 	spawnedRemoteActor struct {
 		remoteActorPID *actor.PID
@@ -122,6 +124,23 @@ func (state *Initializer) Receive(context actor.Context) {
 	case weightsUpdated:
 		// Once the weights are updated, let coordinator know
 		context.Send(state.coordinatorPID, msg)
+	case trainingFinished:
+		// Once the training is finished we can serialize
+		// the new weights
+		file, err := os.Create("weightModel.json")
+
+		if err != nil {
+			panic(err)
+		}
+
+		defer file.Close()
+		encoder := json.NewEncoder(file)
+
+		encodingError := encoder.Encode(globalWeightsModel)
+		if encodingError != nil {
+			panic(err)
+		}
+		fmt.Println("Successfully written the weights to 'weightModel.json' file!")
 	}
 
 }
@@ -160,10 +179,12 @@ func (state *Coordinator) Training(context actor.Context) {
 	// When we receive this message, the coordinator sends messages to
 	// all the training actors to start a new round of training
 	case startTraining:
+		state.weights = []WeightsDictionary{}
 		fmt.Printf("Starting a new round of training at %v\n", time.Now())
 		// If we have reached maximum rounds of training we exit
 		if state.roundsTrained >= state.maxRounds {
 			fmt.Printf("Reached a maximum of %v training rounds.\n", state.maxRounds)
+			context.Send(state.parentPID, trainingFinished{})
 			return
 		}
 		// Create a training reqeuest message which will be sent
@@ -185,7 +206,6 @@ func (state *Coordinator) Training(context actor.Context) {
 			context.Send(pid, trainMessage)
 			state.actorsTraining += 1
 		})
-
 		state.roundsTrained += 1
 		fmt.Println("TRAINING ROUND: ", state.roundsTrained)
 
@@ -254,6 +274,7 @@ func (state *Aggregator) Receive(context actor.Context) {
 	// so it can start another round of training
 	case calculateAverage:
 		fmt.Printf("Averaging the weights %v\n", time.Now())
+		fmt.Println("Length of all weights array:", len(msg.weights))
 		FedAVG(msg.weights)
 		fmt.Printf("Weights have been averaged %v\n", time.Now())
 		context.Send(state.parentPID, weightsUpdated{})
@@ -447,8 +468,21 @@ var port int
 
 func main() {
 
-	localAddress = "127.0.0.1"
+	localAddress = "192.168.0.23"
 	port = 8000
+
+	file, openingErr := os.Open("weightModel.json")
+	if openingErr != nil {
+		panic(openingErr)
+	}
+	defer file.Close()
+
+	// Decode the JSON data from the file into a struct
+	decoder := json.NewDecoder(file)
+	deserializingError := decoder.Decode(&globalWeightsModel)
+	if deserializingError != nil {
+		panic(deserializingError)
+	}
 
 	system := actor.NewActorSystem()
 	decider := func(reason interface{}) actor.Directive {
@@ -469,14 +503,19 @@ func main() {
 	remoting := remote.NewRemote(system, remoteConfig)
 	remoting.Start()
 
-	spawnResponse, err := remoting.SpawnNamed("127.0.0.1:8091", "training_actor", "training_actor", time.Second)
+	spawnResponse, err1 := remoting.SpawnNamed("127.0.0.1:8091", "training_actor", "training_actor", time.Second)
+	// spawnResponse1, err2 := remoting.SpawnNamed("192.168.0.24:8091", "training_actor", "training_actor", time.Second)
 
-	if err != nil {
-		panic(err)
+	if err1 != nil {
+		panic(err1)
 	}
-
+	// if err2 != nil {
+	// 	panic(err2)
+	// }
 	spawnedActorMessage := spawnedRemoteActor{remoteActorPID: spawnResponse.Pid}
+	// spawnedActorMessage1 := spawnedRemoteActor{remoteActorPID: spawnResponse1.Pid}
 	rootContext.Send(pid, spawnedActorMessage)
+	// rootContext.Send(pid, spawnedActorMessage1)
 	rootContext.Send(pid, startTraining{})
 
 	_, _ = console.ReadLine()

@@ -3,7 +3,9 @@ package main
 import (
 	"federative-learning/messages"
 	"fmt"
+	"log"
 	"os"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -43,6 +45,12 @@ type (
 	Logger struct {
 		pid       *actor.PID
 		parentPID *actor.PID
+	}
+
+	LogMessage struct {
+		Sender      *actor.PID
+		Recipient   *actor.PID
+		MessageType string
 	}
 
 	pidsDtos struct {
@@ -92,7 +100,6 @@ func NewSetCoordinatorBehavior() actor.Actor {
 }
 
 func (state *Initializer) Receive(context actor.Context) {
-
 	switch msg := context.Message().(type) {
 
 	case *actor.PID:
@@ -107,23 +114,51 @@ func (state *Initializer) Receive(context actor.Context) {
 		state.aggregatorPID = aggregatorPID
 		state.loggerPID = loggerPID
 		state.coordinatorPID = coorditatorPID
+		senderPID := context.Self()
 
-		context.Send(loggerPID, pidsDtos{initPID: msg, loggerPID: loggerPID})
-		context.Send(coorditatorPID, pidsDtos{initPID: msg, coordinatorPID: coorditatorPID, loggerPID: loggerPID, aggregatorPID: aggregatorPID})
-		context.Send(aggregatorPID, pidsDtos{initPID: msg, aggregatorPID: aggregatorPID})
+		msg1 := pidsDtos{initPID: msg, loggerPID: loggerPID}
+		context.Send(loggerPID, msg1)
+		msgType1 := reflect.TypeOf(msg1).String()
+		message1 := LogMessage{Sender: senderPID, Recipient: state.loggerPID, MessageType: msgType1}
+		context.Send(state.loggerPID, message1)
+
+		msg2 := pidsDtos{initPID: msg, coordinatorPID: coorditatorPID, loggerPID: loggerPID, aggregatorPID: aggregatorPID}
+		context.Send(coorditatorPID, msg2)
+		msgType2 := reflect.TypeOf(msg2).String()
+		message2 := LogMessage{Sender: senderPID, Recipient: state.coordinatorPID, MessageType: msgType2}
+		context.Send(state.loggerPID, message2)
+
+		msg3 := pidsDtos{initPID: msg, aggregatorPID: aggregatorPID}
+		context.Send(aggregatorPID, msg3)
+		msgType3 := reflect.TypeOf(msg3).String()
+		message3 := LogMessage{Sender: senderPID, Recipient: state.aggregatorPID, MessageType: msgType3}
+		context.Send(state.loggerPID, message3)
+
 		fmt.Printf("Initialized all actors %v\n", time.Now())
 
 	case spawnedRemoteActor:
 		// Passing the message to the cooridnator actor
 		fmt.Printf("Spawned remote actor %v at %v\n", msg.remoteActorPID, time.Now())
 		context.Send(state.coordinatorPID, msg)
+		senderPID := context.Self()
+		msgType4 := reflect.TypeOf(msg).String()
+		message4 := LogMessage{Sender: senderPID, Recipient: state.coordinatorPID, MessageType: msgType4}
+		context.Send(state.loggerPID, message4)
 
 	case startTraining:
 		// Passing the message to the cooridnator actor
 		context.Send(state.coordinatorPID, msg)
+		senderPID := context.Self()
+		msgType5 := reflect.TypeOf(msg).String()
+		message5 := LogMessage{Sender: senderPID, Recipient: state.coordinatorPID, MessageType: msgType5}
+		context.Send(state.loggerPID, message5)
 	case weightsUpdated:
 		// Once the weights are updated, let coordinator know
 		context.Send(state.coordinatorPID, msg)
+		senderPID := context.Self()
+		msgType6 := reflect.TypeOf(msg).String()
+		message6 := LogMessage{Sender: senderPID, Recipient: state.coordinatorPID, MessageType: msgType6}
+		context.Send(state.loggerPID, message6)
 	case trainingFinished:
 		// Once the training is finished we can serialize
 		// the new weights
@@ -141,8 +176,10 @@ func (state *Initializer) Receive(context actor.Context) {
 			panic(err)
 		}
 		fmt.Println("Successfully written the weights to 'weightModel.json' file!")
-	}
 
+	case LogMessage:
+		context.Send(state.loggerPID, msg)
+	}
 }
 
 func (state *Coordinator) Receive(context actor.Context) {
@@ -184,7 +221,13 @@ func (state *Coordinator) Training(context actor.Context) {
 		// If we have reached maximum rounds of training we exit
 		if state.roundsTrained >= state.maxRounds {
 			fmt.Printf("Reached a maximum of %v training rounds.\n", state.maxRounds)
-			context.Send(state.parentPID, trainingFinished{})
+			msg7 := trainingFinished{}
+			context.Send(state.parentPID, msg7)
+			senderPID := context.Self()
+			msgType7 := reflect.TypeOf(msg7).String()
+			message7 := LogMessage{Sender: senderPID, Recipient: state.parentPID, MessageType: msgType7}
+			context.Send(state.loggerPID, message7)
+
 			return
 		}
 		// Create a training reqeuest message which will be sent
@@ -203,7 +246,12 @@ func (state *Coordinator) Training(context actor.Context) {
 		}
 		// Send the message to all the training actors
 		state.children.ForEach(func(i int, pid *actor.PID) {
-			context.Send(pid, trainMessage)
+			msg8 := trainMessage
+			senderPID := context.Self()
+			context.Send(pid, msg8)
+			msgType8 := reflect.TypeOf(msg8).String()
+			message8 := LogMessage{Sender: senderPID, Recipient: pid, MessageType: msgType8}
+			context.Send(state.loggerPID, message8)
 			state.actorsTraining += 1
 		})
 		state.roundsTrained += 1
@@ -224,7 +272,12 @@ func (state *Coordinator) Training(context actor.Context) {
 		// send the weights to the aggregator
 		if state.actorsTraining == 0 {
 			fmt.Printf("All actors finished training, the round %v has ended at %v\n", state.roundsTrained, time.Now())
-			context.Send(state.aggregatorPID, calculateAverage{weights: weightsToAvg})
+			msg9 := calculateAverage{weights: weightsToAvg}
+			senderPID := context.Self()
+			context.Send(state.aggregatorPID, msg9)
+			msgType9 := reflect.TypeOf(msg9).String()
+			message9 := LogMessage{Sender: senderPID, Recipient: state.aggregatorPID, MessageType: msgType9}
+			context.Send(state.loggerPID, message9)
 			state.behavior.Become(state.WeightCalculating)
 		}
 	}
@@ -241,7 +294,12 @@ func (state *Coordinator) WeightCalculating(context actor.Context) {
 		fmt.Printf("msg: %v\n", msg)
 	case weightsUpdated:
 		state.behavior.Become(state.Training)
-		context.Send(state.parentPID, startTraining{})
+		msg10 := startTraining{}
+		context.Send(state.parentPID, msg10)
+		senderPID := context.Self()
+		msgType10 := reflect.TypeOf(msg10).String()
+		message10 := LogMessage{Sender: senderPID, Recipient: state.parentPID, MessageType: msgType10}
+		context.Send(state.loggerPID, message10)
 	}
 }
 
@@ -253,7 +311,8 @@ func (state *Logger) Receive(context actor.Context) {
 		}
 		state.parentPID = msg.initPID
 		state.pid = msg.loggerPID
-
+	case LogMessage:
+		log.Printf("Sender: %v, Receiver: %v, Message type: %v", msg.Sender, msg.Recipient, msg.MessageType)
 	}
 }
 
@@ -277,7 +336,12 @@ func (state *Aggregator) Receive(context actor.Context) {
 		fmt.Println("Length of all weights array:", len(msg.weights))
 		FedAVG(msg.weights)
 		fmt.Printf("Weights have been averaged %v\n", time.Now())
-		context.Send(state.parentPID, weightsUpdated{})
+		msg11 := weightsUpdated{}
+		context.Send(state.parentPID, msg11)
+		senderPID := context.Self()
+		msgType11 := reflect.TypeOf(msg11).String()
+		message11 := LogMessage{Sender: senderPID, Recipient: state.parentPID, MessageType: msgType11}
+		context.Send(state.parentPID, message11)
 	}
 }
 
@@ -468,7 +532,7 @@ var port int
 
 func main() {
 
-	localAddress = "192.168.0.23"
+	localAddress = "127.0.0.1"
 	port = 8000
 
 	file, openingErr := os.Open("weightModel.json")
@@ -476,6 +540,11 @@ func main() {
 		panic(openingErr)
 	}
 	defer file.Close()
+
+	logfile, _ := os.Create("log.txt")
+	log.SetOutput(logfile)
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+	defer logfile.Close()
 
 	// Decode the JSON data from the file into a struct
 	decoder := json.NewDecoder(file)
@@ -497,7 +566,12 @@ func main() {
 			actor.WithSupervisor(supervisor))
 	pid := rootContext.Spawn(props)
 
-	rootContext.Send(pid, pid)
+	msg12 := pid
+	rootContext.Send(pid, msg12)
+	senderPID := rootContext.Self()
+	msgType12 := reflect.TypeOf(msg12).String()
+	message12 := LogMessage{Sender: senderPID, Recipient: pid, MessageType: msgType12}
+	rootContext.Send(pid, message12)
 
 	remoteConfig := remote.Configure(localAddress, port)
 	remoting := remote.NewRemote(system, remoteConfig)
@@ -514,9 +588,17 @@ func main() {
 	// }
 	spawnedActorMessage := spawnedRemoteActor{remoteActorPID: spawnResponse.Pid}
 	// spawnedActorMessage1 := spawnedRemoteActor{remoteActorPID: spawnResponse1.Pid}
-	rootContext.Send(pid, spawnedActorMessage)
+	msg13 := spawnedActorMessage
+	rootContext.Send(pid, msg13)
+	msgType13 := reflect.TypeOf(msg13).String()
+	message13 := LogMessage{Sender: senderPID, Recipient: pid, MessageType: msgType13}
+	rootContext.Send(pid, message13)
 	// rootContext.Send(pid, spawnedActorMessage1)
-	rootContext.Send(pid, startTraining{})
+	msg14 := startTraining{}
+	rootContext.Send(pid, msg14)
+	msgType14 := reflect.TypeOf(msg14).String()
+	message14 := LogMessage{Sender: senderPID, Recipient: pid, MessageType: msgType14}
+	rootContext.Send(pid, message14)
 
 	_, _ = console.ReadLine()
 }
